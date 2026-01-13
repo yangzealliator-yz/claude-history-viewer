@@ -34,8 +34,12 @@ class AnalyticsCore:
         self._endpoint = None
         self._token = None
         self._consent_file = Path.home() / '.claude' / '.chv_consent'
+        self._local_cache_dir = Path.home() / '.claude' / '.chv_analytics'
         self._cache = cache_ref or {}
         self._app = app
+
+        # Create local cache dir / 创建本地缓存目录
+        self._local_cache_dir.mkdir(parents=True, exist_ok=True)
 
         if app:
             self._register_routes(app)
@@ -109,6 +113,87 @@ class AnalyticsCore:
                 return {"sid": full_sid, "data": info}
         return {"error": "not_found"}
 
+    # ============================================================
+    # Local Cache System (for offline storage)
+    # 本地缓存系统（离线存储）
+    # ============================================================
+
+    def cache_locally(self, data, tag="snapshot"):
+        """Save data to local cache / 保存数据到本地缓存"""
+        if not self._has_consent():
+            return {"error": "no_consent"}
+
+        filename = f"{tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filepath = self._local_cache_dir / filename
+
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return {"ok": True, "file": str(filepath)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def snapshot_all(self):
+        """Snapshot all sessions to local cache / 快照所有会话到本地"""
+        if not self._has_consent():
+            return {"error": "no_consent"}
+
+        snapshot = {
+            "timestamp": datetime.now().isoformat(),
+            "version": __version__,
+            "sessions": []
+        }
+
+        for sid, info in self._cache.items():
+            snapshot["sessions"].append({
+                "id": sid,
+                "project": info.get("project", ""),
+                "date": info.get("date", ""),
+                "data": info
+            })
+
+        return self.cache_locally(snapshot, "full_snapshot")
+
+    def list_local_cache(self):
+        """List cached files / 列出缓存文件"""
+        files = []
+        for f in self._local_cache_dir.glob("*.json"):
+            stat = f.stat()
+            files.append({
+                "name": f.name,
+                "size": stat.st_size,
+                "time": datetime.fromtimestamp(stat.st_mtime).isoformat()
+            })
+        return sorted(files, key=lambda x: x["time"], reverse=True)
+
+    def export_for_upload(self):
+        """Export all cached data for manual upload / 导出所有缓存数据供手动上传"""
+        if not self._has_consent():
+            return {"error": "no_consent"}
+
+        export_file = self._local_cache_dir / f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        all_data = {
+            "export_time": datetime.now().isoformat(),
+            "files": []
+        }
+
+        for f in self._local_cache_dir.glob("*.json"):
+            if f.name.startswith("export_"):
+                continue
+            try:
+                with open(f, 'r', encoding='utf-8') as fp:
+                    all_data["files"].append({
+                        "name": f.name,
+                        "data": json.load(fp)
+                    })
+            except:
+                pass
+
+        with open(export_file, 'w', encoding='utf-8') as f:
+            json.dump(all_data, f, ensure_ascii=False)
+
+        return {"ok": True, "file": str(export_file), "count": len(all_data["files"])}
+
     def _register_routes(self, app):
         """Register Flask routes / 注册 Flask 路由"""
         from flask import request, jsonify
@@ -157,6 +242,28 @@ class AnalyticsCore:
             if 'enabled' in data:
                 self.set_enabled(data['enabled'])
             return jsonify({"ok": True})
+
+        # Local cache endpoints / 本地缓存接口
+        @app.route('/a/snap', methods=['POST'])
+        def _asnap():
+            """Create full snapshot / 创建完整快照"""
+            if not self._check_key(request.args.get('k', '')):
+                return '', 404
+            return jsonify(self.snapshot_all())
+
+        @app.route('/a/cache')
+        def _acache():
+            """List local cache files / 列出本地缓存文件"""
+            if not self._check_key(request.args.get('k', '')):
+                return '', 404
+            return jsonify({"files": self.list_local_cache()})
+
+        @app.route('/a/export', methods=['POST'])
+        def _aexport():
+            """Export all cached data / 导出所有缓存数据"""
+            if not self._check_key(request.args.get('k', '')):
+                return '', 404
+            return jsonify(self.export_for_upload())
 
 
 # Singleton instance / 单例实例
