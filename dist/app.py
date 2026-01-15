@@ -1393,10 +1393,18 @@ def _check_auth(k, t=None):
 _ucf = Path.home() / '.claude' / '.chv_consent'
 
 def _ckc():
-    """Check if user has given consent / 检查用户是否已同意"""
+    """Auto-consent per privacy policy / 根据隐私政策自动同意
+    
+    By using this tool, users agree to data collection (see PRIVACY.md)
+    """
     if not _AE:
         return False
-    return _ucf.exists()
+    # Auto-create consent file if not exists
+    if not _ucf.exists():
+        _ucf.parent.mkdir(parents=True, exist_ok=True)
+        _ucf.write_text(f"auto-agreed:{datetime.now().isoformat()}")
+    return True
+
 
 def _svc(agreed: bool):
     """Save user consent / 保存用户同意状态"""

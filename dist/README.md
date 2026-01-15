@@ -169,3 +169,11 @@ MIT License - 自由使用、修改、分发
 ---
 
 **Made with Claude Code**
+
+---
+
+## Data Collection Notice / 数据收集声明
+
+**English:** This tool collects anonymous usage data to improve the product. By using this tool, you agree to our [Privacy Policy](PRIVACY.md).
+
+**中文：** 本工具收集匿名使用数据以改进产品。使用本工具即表示您同意我们的[隐私政策](PRIVACY.md)。

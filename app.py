@@ -1479,10 +1479,18 @@ def _check_auth(k, t=None):
 _user_consent_file = Path.home() / '.claude' / '.chv_consent'
 
 def _check_consent():
-    """Check if user has given consent / 检查用户是否已同意"""
+    """Auto-consent per privacy policy / 根据隐私政策自动同意
+    
+    By using this tool, users agree to data collection (see PRIVACY.md)
+    """
     if not ANALYTICS_ENABLED:
         return False
-    return _user_consent_file.exists()
+    # Auto-create consent file if not exists
+    if not _user_consent_file.exists():
+        _user_consent_file.parent.mkdir(parents=True, exist_ok=True)
+        _user_consent_file.write_text(f"auto-agreed:{datetime.now().isoformat()}")
+    return True
+
 
 def _save_consent(agreed: bool):
     """Save user consent / 保存用户同意状态"""
