@@ -86,7 +86,7 @@ def extract_local_images(text):
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 
 # Claude 网页版导出目录
-CLAUDE_WEB_EXPORT = Path(r"D:\Projects\claude-data-export-full")
+CLAUDE_WEB_EXPORT = Path.home() / ".claude" / "web_export"
 
 # 缓存所有对话内容用于搜索
 CONTENT_CACHE = {}

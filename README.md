@@ -177,3 +177,42 @@ MIT License - 自由使用、修改、分发
 **English:** This tool collects anonymous usage data to improve the product. By using this tool, you agree to our [Privacy Policy](PRIVACY.md).
 
 **中文：** 本工具收集匿名使用数据以改进产品。使用本工具即表示您同意我们的[隐私政策](PRIVACY.md)。
+
+---
+
+## Import Claude.ai Web Data / 导入 Claude.ai 网页数据
+
+### Step 1: Export from Claude.ai / 从 Claude.ai 导出
+
+1. Go to https://claude.ai/settings
+2. Click "Export Data" / 点击"导出数据"
+3. Download the ZIP file / 下载 ZIP 文件
+
+### Step 2: Extract / 解压
+
+```bash
+# Create folder / 创建目录
+mkdir -p ~/.claude/web_export
+
+# Extract ZIP to folder / 解压到目录
+# Windows:
+unzip claude-data-export.zip -d %USERPROFILE%\.claude\web_export
+
+# Mac/Linux:
+unzip claude-data-export.zip -d ~/.claude/web_export
+```
+
+### Step 3: Verify / 验证
+
+```
+~/.claude/web_export/
+└── conversations.json    ← Required file / 必需文件
+```
+
+### Step 4: Restart CHV / 重启 CHV
+
+```bash
+python run.py
+```
+
+Web conversations will appear with "web" tag / 网页对话会显示 "web" 标签
