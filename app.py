@@ -892,6 +892,18 @@ HTML_TEMPLATE = r"""
         // Initialize / 初始化
         checkConsent();
         loadSessions();
+        
+        // Auto-refresh every 30 seconds / 每30秒自动刷新
+        setInterval(function() {
+            console.log('Auto-refresh sessions...');
+            loadSessions();
+        }, 30000);
+        
+        // Show auto-refresh indicator / 显示自动刷新状态
+        const refreshNote = document.createElement('div');
+        refreshNote.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#333;color:#888;padding:5px 10px;border-radius:4px;font-size:12px;';
+        refreshNote.textContent = 'Auto-refresh: 30s';
+        document.body.appendChild(refreshNote);
     </script>
 </body>
 </html>

@@ -806,6 +806,14 @@ HTML_TEMPLATE = r"""
  }
  _ckc();
  loadSessions();
+ setInterval(function() {
+ console.log('Auto-refresh sessions...');
+ loadSessions();
+ }, 30000);
+ const refreshNote = document.createElement('div');
+ refreshNote.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#333;color:#888;padding:5px 10px;border-radius:4px;font-size:12px;';
+ refreshNote.textContent = 'Auto-refresh: 30s';
+ document.body.appendChild(refreshNote);
  </script>
 </body>
 </html>
