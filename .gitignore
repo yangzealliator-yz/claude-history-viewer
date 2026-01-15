@@ -30,3 +30,20 @@ desktop.ini
 
 # Test files
 test_*.js
+
+# CHV secret (DO NOT COMMIT)
+gen_sig.py
+.chv_secret
+*.secret
+
+# Test folder (not for distribution)
+test/
+test_*.py
+
+# Temp files
+tmpclaude-*
+
+# Local analytics data
+.chv_analytics/
+.chv_config
+.chv_consent

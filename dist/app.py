@@ -381,518 +381,432 @@ HTML_TEMPLATE = r"""
     </div>
 
     <script>
-        let allSessions = [];
-        let searchResults = [];
-        let selectedIds = new Set();
-        let currentQuery = '';
-        let currentMessages = [];
-        let displayedCount = 0;
-        const PAGE_SIZE = 50;
-
-        async function loadSessions() {
-            const res = await fetch('/api/sessions');
-            const data = await res.json();
-            allSessions = data.sessions;
-
-            document.getElementById('stats').innerHTML = `
-                <div>📁 项目: ${data.stats.projects}</div>
-                <div>💬 会话: ${data.stats.sessions}</div>
-                <div>📝 消息: ${data.stats.messages.toLocaleString()}</div>
-            `;
-
-            searchResults = allSessions;
-            renderSessions(allSessions);
-            updateResultCount(allSessions.length);
-        }
-
-        function handleSearch(e) {
-            if (e.key === 'Enter') {
-                performSearch();
-            }
-        }
-
-        async function performSearch() {
-            const query = document.getElementById('searchInput').value.trim();
-            const searchContent = document.getElementById('searchContent').checked;
-            const searchTitle = document.getElementById('searchTitle').checked;
-            const sortBy = document.getElementById('sortBy').value;
-            const sourceFilter = document.getElementById('sourceFilter').value;
-
-            currentQuery = query;
-            document.getElementById('sessionList').innerHTML = '<div class="loading">搜索中...</div>';
-
-            let results;
-            if (!query) {
-                results = [...allSessions];
-            } else {
-                const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&content=${searchContent}&title=${searchTitle}`);
-                results = await res.json();
-            }
-
-            // 来源筛选
-            if (sourceFilter !== 'all') {
-                results = results.filter(s => s.source === sourceFilter);
-            }
-
-            // 排序
-            if (sortBy === 'time_desc') {
-                results.sort((a, b) => b.timestamp - a.timestamp);
-            } else if (sortBy === 'time_asc') {
-                results.sort((a, b) => a.timestamp - b.timestamp);
-            } else if (sortBy === 'matches') {
-                results.sort((a, b) => (b.match_count || 0) - (a.match_count || 0));
-            } else if (sortBy === 'title') {
-                results.sort((a, b) => a.title.localeCompare(b.title));
-            }
-
-            searchResults = results;
-            renderSessions(results, query);
-            updateResultCount(results.length, query);
-        }
-
-        function renderSessions(sessions, highlightQuery = '') {
-            const html = sessions.map(s => {
-                const checked = selectedIds.has(s.id) ? 'checked' : '';
-                let snippet = '';
-                if (s.snippet && highlightQuery) {
-                    snippet = `<div class="session-snippet">${highlightText(s.snippet, highlightQuery)}</div>`;
-                }
-                const sourceTag = s.source === 'web' ? '<span style="color:#4ae945;font-size:10px;">[Web]</span> ' : '';
-                const matchInfo = s.match_count ? `<span style="color:#e94560;font-size:10px;"> (${s.match_count}次匹配)</span>` : '';
-                return `
-                    <div class="session-item" data-id="${s.id}">
-                        <input type="checkbox" ${checked} onclick="toggleSelect(event, '${s.id}')">
-                        <div class="session-content" onclick="loadConversation('${s.id}', '${s.project}', '${escapeHtml(highlightQuery)}')">
-                            <div class="session-title">${sourceTag}${highlightText(escapeHtml(s.title), highlightQuery)}</div>
-                            <div class="session-meta">${s.project_name} · ${s.date}${matchInfo}</div>
-                            ${snippet}
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            document.getElementById('sessionList').innerHTML = html || '<div class="loading">无结果</div>';
-        }
-
-        function highlightText(text, query) {
-            if (!query) return text;
-            const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
-            return text.replace(regex, '<mark>$1</mark>');
-        }
-
-        function escapeRegex(str) {
-            return str.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
-        }
-
-        function updateResultCount(count, query = '') {
-            const el = document.getElementById('resultCount');
-            if (query) {
-                el.textContent = `找到 ${count} 个匹配 "${query}"`;
-            } else {
-                el.textContent = `共 ${count} 个会话`;
-            }
-        }
-
-        function toggleSelect(e, id) {
-            e.stopPropagation();
-            if (e.target.checked) {
-                selectedIds.add(id);
-            } else {
-                selectedIds.delete(id);
-            }
-            updateExportBtn();
-        }
-
-        function selectAll() {
-            searchResults.forEach(s => selectedIds.add(s.id));
-            renderSessions(searchResults, currentQuery);
-            updateExportBtn();
-        }
-
-        function deselectAll() {
-            selectedIds.clear();
-            renderSessions(searchResults, currentQuery);
-            updateExportBtn();
-        }
-
-        function updateExportBtn() {
-            const btn = document.getElementById('exportBtn');
-            btn.textContent = `导出选中 (${selectedIds.size})`;
-            btn.disabled = selectedIds.size === 0;
-        }
-
-        async function exportSelected() {
-            if (selectedIds.size === 0) return;
-
-            const ids = Array.from(selectedIds);
-            const res = await fetch('/api/export', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ids: ids, sessions: searchResults.filter(s => ids.includes(s.id))})
-            });
-
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `claude_export_${new Date().toISOString().slice(0,10)}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-
-        async function loadConversation(sessionId, project, query) {
-            document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
-            event.target.closest('.session-item').classList.add('active');
-
-            document.getElementById('mainContent').innerHTML = '<div class="loading">加载中...</div>';
-
-            const loadLocal = document.getElementById('loadLocalImages').checked;
-            const res = await fetch(`/api/conversation?session=${sessionId}&project=${encodeURIComponent(project)}&load_local=${loadLocal}`);
-            currentMessages = await res.json();
-            displayedCount = 0;
-            currentQuery = query;
-
-            renderMessages(true);
-        }
-
-        function renderMessages(reset = false) {
-            const startIdx = displayedCount;
-            const endIdx = Math.min(displayedCount + PAGE_SIZE, currentMessages.length);
-            const messagesToRender = currentMessages.slice(startIdx, endIdx);
-
-            const html = messagesToRender.map((m, i) => {
-                const idx = startIdx + i;
-                let content = m.content || '';
-                if (currentQuery) {
-                    content = highlightText(escapeHtml(content), currentQuery);
-                } else {
-                    content = escapeHtml(content);
-                }
-                // 渲染图片
-                if (m.images && m.images.length > 0) {
-                    m.images.forEach(img => {
-                        const imgData = typeof img === 'object' ? img.data : img;
-                        const mediaType = typeof img === 'object' ? (img.media_type || 'image/png') : 'image/png';
-                        const sourcePath = typeof img === 'object' ? (img.source_path || '') : '';
-                        if (sourcePath) {
-                            content += `<br><div style="font-size:10px;color:#888;margin-top:10px;">📷 ${sourcePath}</div>`;
-                        }
-                        content += `<img src="data:${mediaType};base64,${imgData}" style="max-width:100%;border-radius:8px;margin:5px 0;" loading="lazy" />`;
-                    });
-                }
-                // 渲染 thinking
-                if (m.thinking) {
-                    let thinkingContent = escapeHtml(m.thinking);
-                    if (m.thinking_images && m.thinking_images.length > 0) {
-                        thinkingContent += '<div style="margin-top:10px;border-top:1px solid #444;padding-top:10px;">';
-                        thinkingContent += '<div style="font-size:11px;color:#888;margin-bottom:5px;">📷 Thinking 中引用的图片:</div>';
-                        m.thinking_images.forEach((img, imgIdx) => {
-                            const imgData = typeof img === 'object' ? img.data : img;
-                            const mediaType = typeof img === 'object' ? (img.media_type || 'image/png') : 'image/png';
-                            const sourcePath = typeof img === 'object' ? (img.source_path || '') : '';
-                            if (sourcePath) {
-                                thinkingContent += `<div style="font-size:10px;color:#666;margin:5px 0;">${sourcePath}</div>`;
-                            }
-                            thinkingContent += `<img src="data:${mediaType};base64,${imgData}" style="max-width:100%;margin:5px 0;border-radius:4px;" loading="lazy" />`;
-                        });
-                        thinkingContent += '</div>';
-                    }
-                    const thinkingHtml = makeCollapsible('Thinking', thinkingContent, 'thinking-block', idx + '_thinking');
-                    content = thinkingHtml + content;
-                }
-                // 长内容折叠
-                const formattedContent = formatContent(content);
-                const needsCollapse = content.length > 2000;
-
-                return `
-                    <div class="message ${m.role}">
-                        <div class="message-role">${m.role}${m.role === 'summary' ? ' (Context Summary)' : ''}</div>
-                        <div class="message-content">${needsCollapse ? makeCollapsible('Long Content (' + content.length + ' chars)', formattedContent, '', idx + '_content', true) : formattedContent}</div>
-                    </div>
-                `;
-            }).join('');
-
-            displayedCount = endIdx;
-
-            // 添加加载更多按钮
-            let loadMoreHtml = '';
-            if (displayedCount < currentMessages.length) {
-                loadMoreHtml = `<div class="load-more"><button onclick="renderMessages()">加载更多 (${displayedCount}/${currentMessages.length})</button></div>`;
-            } else {
-                loadMoreHtml = `<div class="load-more" style="color:#666;">已显示全部 ${currentMessages.length} 条消息</div>`;
-            }
-
-            if (reset) {
-                document.getElementById('mainContent').innerHTML = html + loadMoreHtml || '<div class="loading">无消息</div>';
-            } else {
-                // 移除旧的加载更多按钮，追加新内容
-                const oldLoadMore = document.querySelector('.load-more');
-                if (oldLoadMore) oldLoadMore.remove();
-                document.getElementById('mainContent').innerHTML += html + loadMoreHtml;
-            }
-        }
-
-        function makeCollapsible(title, content, className, id, startOpen = false) {
-            return `
-                <div class="collapsible">
-                    <div class="collapsible-header ${startOpen ? 'open' : ''}" onclick="toggleCollapse('${id}')">
-                        <span>${title}</span>
-                        <span class="arrow">&gt;</span>
-                    </div>
-                    <div class="collapsible-content ${className} ${startOpen ? 'open' : ''}" id="collapse_${id}">
-                        ${content}
-                    </div>
-                </div>
-            `;
-        }
-
-        function toggleCollapse(id) {
-            const content = document.getElementById('collapse_' + id);
-            const header = content.previousElementSibling;
-            content.classList.toggle('open');
-            header.classList.toggle('open');
-        }
-
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        function formatContent(text) {
-            if (!text) return '';
-
-            let result = text;
-
-            // 文件路径匹配 - 使用正则表达式字面量（更可靠）
-            // Windows 绝对路径: D:\xxx\xxx.cs 或 D:/xxx/xxx.cs (支持中文)
-            const winPathPattern = /([A-Za-z]:[\\\/][^\n\r"<>|*?]+\.(cs|gd|ts|js|py|lua|json|yaml|yml|md|txt|xml|html|css|shader|hlsl|glsl|cfg|ini|toml|rs|go|java|cpp|c|h|hpp|swift|kt|gradle|sh|bat|ps1|jsx|tsx|vue|svelte|log|csv|sql|png|jpg|jpeg|gif|webp|bmp|svg|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z|unity|prefab|asset|mat|anim|controller|scene|meta|csproj|sln|jsonl))/gi;
-
-            // 相对路径: Assets/Scripts/*.cs
-            const relPathPattern = /((?:Assets|src|Scripts|Scenes|Resources|Prefabs|Editor|Plugins|DOC)[\\\/][^\s\n\r"<>]+\.(cs|gd|ts|js|py|lua|json|yaml|yml|md|txt|xml|html|css|shader|bat|sh))/gi;
-
-            result = result.replace(winPathPattern, (match) => {
-                // 清理路径末尾可能的标点符号
-                let cleanPath = match.replace(/[,;:)\]}\s]+$/, '');
-                const encodedPath = btoa(unescape(encodeURIComponent(cleanPath)));
-                return '<span class="file-link" data-path="' + encodedPath + '" title="Click to view">' + cleanPath + '</span>' + match.slice(cleanPath.length);
-            });
-
-            result = result.replace(relPathPattern, (match) => {
-                const encodedPath = btoa(unescape(encodeURIComponent(match)));
-                return '<span class="file-link relative" data-path="' + encodedPath + '" title="Relative path">' + match + '</span>';
-            });
-
-            // 代码块和换行
-            result = result
-                .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
-                .replace(/`([^`]+)`/g, '<code>$1</code>')
-                .replace(/\n/g, '<br>');
-
-            return result;
-        }
-
-        async function loadFileContent(filePath, clickedEl) {
-            // 查找或创建文件内容容器
-            const existingContainer = document.querySelector('[data-file-path="' + CSS.escape(filePath) + '"]');
-            if (existingContainer) {
-                existingContainer.classList.toggle('hidden');
-                return;
-            }
-
-            if (!clickedEl) clickedEl = event.target;
-            const container = document.createElement('div');
-            container.className = 'file-content-container';
-            container.setAttribute('data-file-path', filePath);
-            container.innerHTML = '<div class="file-loading">Loading...</div>';
-            clickedEl.parentNode.insertBefore(container, clickedEl.nextSibling);
-
-            try {
-                const response = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);
-                const data = await response.json();
-
-                if (data.error) {
-                    container.innerHTML = `<div class="file-error">${data.error}</div>`;
-                    return;
-                }
-
-                const formatSize = (bytes) => bytes < 1024 ? bytes + ' B' : bytes < 1024*1024 ? (bytes/1024).toFixed(1) + ' KB' : (bytes/1024/1024).toFixed(1) + ' MB';
-
-                if (data.type === 'image') {
-                    // 图片预览
-                    container.innerHTML = `
-                        <div class="file-header">
-                            <span class="file-name">${data.name}</span>
-                            <span class="file-size">${formatSize(data.size)}</span>
-                            <button class="header-btn open-folder-btn" title="Open in folder">folder</button>
-                            <span class="file-close" onclick="this.parentElement.parentElement.classList.add('hidden')">[x]</span>
-                        </div>
-                        <div class="file-image-preview">
-                            <img src="data:${data.media_type};base64,${data.data}" alt="${data.name}" />
-                        </div>
-                    `;
-                    container.querySelector('.open-folder-btn').onclick = () => openInFolder(data.path);
-                } else if (data.type === 'text') {
-                    // 文本/代码
-                    container.innerHTML = `
-                        <div class="file-header">
-                            <span class="file-name">${data.name}</span>
-                            <span class="file-size">${formatSize(data.size)}</span>
-                            <span class="file-lang">${data.language}</span>
-                            <button class="header-btn open-folder-btn" title="Open in folder">folder</button>
-                            <span class="file-close" onclick="this.parentElement.parentElement.classList.add('hidden')">[x]</span>
-                        </div>
-                        <pre class="file-code"><code class="language-${data.language}">${escapeHtml(data.content)}</code></pre>
-                    `;
-                    container.querySelector('.open-folder-btn').onclick = () => openInFolder(data.path);
-                } else if (data.type === 'binary') {
-                    // 二进制文件 - 提供打开选项（类似微信）
-                    container.innerHTML = `
-                        <div class="file-header">
-                            <span class="file-name">${data.name}</span>
-                            <span class="file-size">${formatSize(data.size)}</span>
-                            <span class="file-close" onclick="this.parentElement.parentElement.classList.add('hidden')">[x]</span>
-                        </div>
-                        <div class="file-binary-info">
-                            <p>Binary file (${data.extension})</p>
-                            <p>Size: ${formatSize(data.size)}</p>
-                            <button class="open-folder-btn">Open in folder</button>
-                            <button class="copy-path-btn">Copy path</button>
-                        </div>
-                    `;
-                    container.querySelector('.open-folder-btn').onclick = () => openInFolder(data.path);
-                    container.querySelector('.copy-path-btn').onclick = () => copyToClipboard(data.path);
-                }
-            } catch (err) {
-                container.innerHTML = `<div class="file-error">Failed to load: ${err.message}</div>`;
-            }
-        }
-
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => {
-                showToast('Path copied!');
-            });
-        }
-
-        async function openInFolder(filePath) {
-            try {
-                const response = await fetch(`/api/open-folder?path=${encodeURIComponent(filePath)}`);
-                const data = await response.json();
-                if (data.success) {
-                    showToast('已在文件夹中显示');
-                } else if (response.status === 404) {
-                    // 文件不存在 - 提供复制路径选项
-                    showToastWithAction('文件不存在（可能已移动或删除）', filePath);
-                } else {
-                    showToast('错误: ' + data.error, true);
-                }
-            } catch (err) {
-                showToast('打开失败', true);
-            }
-        }
-
-        function showToastWithAction(message, filePath) {
-            const toast = document.createElement('div');
-            toast.className = 'toast file-not-found';
-            toast.innerHTML = `
-                <div class="toast-icon">⚠️</div>
-                <div class="toast-content">
-                    <div class="toast-title">文件未找到 / File Not Found</div>
-                    <div class="toast-desc">当前目录搜索不到此文件 (File may have been moved or deleted)</div>
-                    <div class="toast-path">${filePath}</div>
-                </div>
-                <button class="toast-btn" onclick="navigator.clipboard.writeText('${filePath.replace(/\\/g, '\\\\\\\\')}').then(() => { this.textContent = '✓ Copied!'; })">复制路径</button>
-            `;
-            document.body.appendChild(toast);
-            setTimeout(() => {
-                toast.classList.add('fade-out');
-                setTimeout(() => toast.remove(), 300);
-            }, 6000);
-        }
-
-        function showToast(message, isError = false) {
-            // 创建 toast 提示
-            const toast = document.createElement('div');
-            toast.className = 'toast' + (isError ? ' error' : '');
-            toast.textContent = message;
-            document.body.appendChild(toast);
-
-            // 3秒后移除
-            setTimeout(() => {
-                toast.classList.add('fade-out');
-                setTimeout(() => toast.remove(), 300);
-            }, 2500);
-        }
-
-        // 事件委托处理文件链接点击
-        // 单击：打开文件夹（微信风格）
-        // Ctrl+点击：展开内容面板
-        document.addEventListener('click', (e) => {
-            if (e.target.classList.contains('file-link')) {
-                const encodedPath = e.target.getAttribute('data-path');
-                if (encodedPath) {
-                    const filePath = decodeURIComponent(escape(atob(encodedPath)));
-                    if (e.ctrlKey) {
-                        // Ctrl+点击：展开内容
-                        loadFileContent(filePath, e.target);
-                    } else {
-                        // 单击：直接打开文件夹（微信风格）
-                        openInFolder(filePath);
-                    }
-                }
-            }
-        });
-
-        // ============================================================
-        // Consent Dialog / 同意弹窗
-        // ============================================================
-        async function checkConsent() {
-            try {
-                const resp = await fetch('/api/consent');
-                const data = await resp.json();
-                if (data.enabled && !data.agreed) {
-                    showConsentDialog();
-                }
-            } catch (e) {
-                console.log('Consent check skipped');
-            }
-        }
-
-        function showConsentDialog() {
-            const overlay = document.createElement('div');
-            overlay.className = 'consent-overlay';
-            overlay.innerHTML = `
-                <div class="consent-dialog">
-                    <h2>Privacy Notice / 隐私声明</h2>
-                    <div class="consent-content">
-                        <p><strong>English:</strong> This app collects anonymous usage statistics to help improve the service. Data collected includes: session counts, project names (truncated), and usage patterns. No personal information or conversation content is shared without your explicit consent.</p>
-                        <p><strong>中文：</strong> 本应用收集匿名使用统计以帮助改进服务。收集的数据包括：会话数量、项目名称（截断）和使用模式。未经您明确同意，不会分享任何个人信息或对话内容。</p>
-                        <p class="consent-note">You can change this setting anytime. / 您可以随时更改此设置。</p>
-                    </div>
-                    <div class="consent-buttons">
-                        <button class="consent-btn agree" onclick="submitConsent(true)">I Agree / 同意</button>
-                        <button class="consent-btn decline" onclick="submitConsent(false)">Decline / 拒绝</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(overlay);
-        }
-
-        async function submitConsent(agreed) {
-            try {
-                await fetch('/api/consent', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({agreed: agreed})
-                });
-            } catch (e) {}
-            document.querySelector('.consent-overlay')?.remove();
-        }
-
-        // Initialize / 初始化
-        checkConsent();
-        loadSessions();
-    </script>
+ let allSessions = [];
+ let searchResults = [];
+ let selectedIds = new Set();
+ let currentQuery = '';
+ let currentMessages = [];
+ let displayedCount = 0;
+ const PAGE_SIZE = 50;
+ async function loadSessions() {
+ const res = await fetch('/api/sessions');
+ const data = await res.json();
+ allSessions = data.sessions;
+ document.getElementById('stats').innerHTML = `
+ <div>📁 项目: ${data.stats.projects}</div>
+ <div>💬 会话: ${data.stats.sessions}</div>
+ <div>📝 消息: ${data.stats.messages.toLocaleString()}</div>
+ `;
+ searchResults = allSessions;
+ renderSessions(allSessions);
+ updateResultCount(allSessions.length);
+ }
+ function handleSearch(e) {
+ if (e.key === 'Enter') {
+ performSearch();
+ }
+ }
+ async function performSearch() {
+ const query = document.getElementById('searchInput').value.trim();
+ const searchContent = document.getElementById('searchContent').checked;
+ const searchTitle = document.getElementById('searchTitle').checked;
+ const sortBy = document.getElementById('sortBy').value;
+ const sourceFilter = document.getElementById('sourceFilter').value;
+ currentQuery = query;
+ document.getElementById('sessionList').innerHTML = '<div class="loading">搜索中...</div>';
+ let results;
+ if (!query) {
+ results = [...allSessions];
+ } else {
+ const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&content=${searchContent}&title=${searchTitle}`);
+ results = await res.json();
+ }
+ if (sourceFilter !== 'all') {
+ results = results.filter(s => s.source === sourceFilter);
+ }
+ if (sortBy === 'time_desc') {
+ results.sort((a, b) => b.timestamp - a.timestamp);
+ } else if (sortBy === 'time_asc') {
+ results.sort((a, b) => a.timestamp - b.timestamp);
+ } else if (sortBy === 'matches') {
+ results.sort((a, b) => (b.match_count || 0) - (a.match_count || 0));
+ } else if (sortBy === 'title') {
+ results.sort((a, b) => a.title.localeCompare(b.title));
+ }
+ searchResults = results;
+ renderSessions(results, query);
+ updateResultCount(results.length, query);
+ }
+ function renderSessions(sessions, highlightQuery = '') {
+ const html = sessions.map(s => {
+ const checked = selectedIds.has(s.id) ? 'checked' : '';
+ let snippet = '';
+ if (s.snippet && highlightQuery) {
+ snippet = `<div class="session-snippet">${highlightText(s.snippet, highlightQuery)}</div>`;
+ }
+ const sourceTag = s.source === 'web' ? '<span style="color:#4ae945;font-size:10px;">[Web]</span> ' : '';
+ const matchInfo = s.match_count ? `<span style="color:#e94560;font-size:10px;"> (${s.match_count}次匹配)</span>` : '';
+ return `
+ <div class="session-item" data-id="${s.id}">
+ <input type="checkbox" ${checked} onclick="toggleSelect(event, '${s.id}')">
+ <div class="session-content" onclick="loadConversation('${s.id}', '${s.project}', '${escapeHtml(highlightQuery)}')">
+ <div class="session-title">${sourceTag}${highlightText(escapeHtml(s.title), highlightQuery)}</div>
+ <div class="session-meta">${s.project_name} · ${s.date}${matchInfo}</div>
+ ${snippet}
+ </div>
+ </div>
+ `;
+ }).join('');
+ document.getElementById('sessionList').innerHTML = html || '<div class="loading">无结果</div>';
+ }
+ function highlightText(text, query) {
+ if (!query) return text;
+ const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
+ return text.replace(regex, '<mark>$1</mark>');
+ }
+ function escapeRegex(str) {
+ return str.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+ }
+ function updateResultCount(count, query = '') {
+ const el = document.getElementById('resultCount');
+ if (query) {
+ el.textContent = `找到 ${count} 个匹配 "${query}"`;
+ } else {
+ el.textContent = `共 ${count} 个会话`;
+ }
+ }
+ function toggleSelect(e, id) {
+ e.stopPropagation();
+ if (e.target.checked) {
+ selectedIds.add(id);
+ } else {
+ selectedIds.delete(id);
+ }
+ updateExportBtn();
+ }
+ function selectAll() {
+ searchResults.forEach(s => selectedIds.add(s.id));
+ renderSessions(searchResults, currentQuery);
+ updateExportBtn();
+ }
+ function deselectAll() {
+ selectedIds.clear();
+ renderSessions(searchResults, currentQuery);
+ updateExportBtn();
+ }
+ function updateExportBtn() {
+ const btn = document.getElementById('exportBtn');
+ btn.textContent = `导出选中 (${selectedIds.size})`;
+ btn.disabled = selectedIds.size === 0;
+ }
+ async function exportSelected() {
+ if (selectedIds.size === 0) return;
+ const ids = Array.from(selectedIds);
+ const res = await fetch('/api/export', {
+ method: 'POST',
+ headers: {'Content-Type': 'application/json'},
+ body: JSON.stringify({ids: ids, sessions: searchResults.filter(s => ids.includes(s.id))})
+ });
+ const blob = await res.blob();
+ const url = URL.createObjectURL(blob);
+ const a = document.createElement('a');
+ a.href = url;
+ a.download = `claude_export_${new Date().toISOString().slice(0,10)}.json`;
+ a.click();
+ URL.revokeObjectURL(url);
+ }
+ async function loadConversation(sessionId, project, query) {
+ document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
+ event.target.closest('.session-item').classList.add('active');
+ document.getElementById('mainContent').innerHTML = '<div class="loading">加载中...</div>';
+ const loadLocal = document.getElementById('loadLocalImages').checked;
+ const res = await fetch(`/api/conversation?session=${sessionId}&project=${encodeURIComponent(project)}&load_local=${loadLocal}`);
+ currentMessages = await res.json();
+ displayedCount = 0;
+ currentQuery = query;
+ renderMessages(true);
+ }
+ function renderMessages(reset = false) {
+ const startIdx = displayedCount;
+ const endIdx = Math.min(displayedCount + PAGE_SIZE, currentMessages.length);
+ const messagesToRender = currentMessages.slice(startIdx, endIdx);
+ const html = messagesToRender.map((m, i) => {
+ const idx = startIdx + i;
+ let content = m.content || '';
+ if (currentQuery) {
+ content = highlightText(escapeHtml(content), currentQuery);
+ } else {
+ content = escapeHtml(content);
+ }
+ if (m.images && m.images.length > 0) {
+ m.images.forEach(img => {
+ const imgData = typeof img === 'object' ? img.data : img;
+ const mediaType = typeof img === 'object' ? (img.media_type || 'image/png') : 'image/png';
+ const sourcePath = typeof img === 'object' ? (img.source_path || '') : '';
+ if (sourcePath) {
+ content += `<br><div style="font-size:10px;color:#888;margin-top:10px;">📷 ${sourcePath}</div>`;
+ }
+ content += `<img src="data:${mediaType};base64,${imgData}" style="max-width:100%;border-radius:8px;margin:5px 0;" loading="lazy" />`;
+ });
+ }
+ if (m.thinking) {
+ let thinkingContent = escapeHtml(m.thinking);
+ if (m.thinking_images && m.thinking_images.length > 0) {
+ thinkingContent += '<div style="margin-top:10px;border-top:1px solid #444;padding-top:10px;">';
+ thinkingContent += '<div style="font-size:11px;color:#888;margin-bottom:5px;">📷 Thinking 中引用的图片:</div>';
+ m.thinking_images.forEach((img, imgIdx) => {
+ const imgData = typeof img === 'object' ? img.data : img;
+ const mediaType = typeof img === 'object' ? (img.media_type || 'image/png') : 'image/png';
+ const sourcePath = typeof img === 'object' ? (img.source_path || '') : '';
+ if (sourcePath) {
+ thinkingContent += `<div style="font-size:10px;color:#666;margin:5px 0;">${sourcePath}</div>`;
+ }
+ thinkingContent += `<img src="data:${mediaType};base64,${imgData}" style="max-width:100%;margin:5px 0;border-radius:4px;" loading="lazy" />`;
+ });
+ thinkingContent += '</div>';
+ }
+ const thinkingHtml = makeCollapsible('Thinking', thinkingContent, 'thinking-block', idx + '_thinking');
+ content = thinkingHtml + content;
+ }
+ const formattedContent = formatContent(content);
+ const needsCollapse = content.length > 2000;
+ return `
+ <div class="message ${m.role}">
+ <div class="message-role">${m.role}${m.role === 'summary' ? ' (Context Summary)' : ''}</div>
+ <div class="message-content">${needsCollapse ? makeCollapsible('Long Content (' + content.length + ' chars)', formattedContent, '', idx + '_content', true) : formattedContent}</div>
+ </div>
+ `;
+ }).join('');
+ displayedCount = endIdx;
+ let loadMoreHtml = '';
+ if (displayedCount < currentMessages.length) {
+ loadMoreHtml = `<div class="load-more"><button onclick="renderMessages()">加载更多 (${displayedCount}/${currentMessages.length})</button></div>`;
+ } else {
+ loadMoreHtml = `<div class="load-more" style="color:#666;">已显示全部 ${currentMessages.length} 条消息</div>`;
+ }
+ if (reset) {
+ document.getElementById('mainContent').innerHTML = html + loadMoreHtml || '<div class="loading">无消息</div>';
+ } else {
+ const oldLoadMore = document.querySelector('.load-more');
+ if (oldLoadMore) oldLoadMore.remove();
+ document.getElementById('mainContent').innerHTML += html + loadMoreHtml;
+ }
+ }
+ function makeCollapsible(title, content, className, id, startOpen = false) {
+ return `
+ <div class="collapsible">
+ <div class="collapsible-header ${startOpen ? 'open' : ''}" onclick="toggleCollapse('${id}')">
+ <span>${title}</span>
+ <span class="arrow">&gt;</span>
+ </div>
+ <div class="collapsible-content ${className} ${startOpen ? 'open' : ''}" id="collapse_${id}">
+ ${content}
+ </div>
+ </div>
+ `;
+ }
+ function toggleCollapse(id) {
+ const content = document.getElementById('collapse_' + id);
+ const header = content.previousElementSibling;
+ content.classList.toggle('open');
+ header.classList.toggle('open');
+ }
+ function escapeHtml(text) {
+ if (!text) return '';
+ const div = document.createElement('div');
+ div.textContent = text;
+ return div.innerHTML;
+ }
+ function formatContent(text) {
+ if (!text) return '';
+ let result = text;
+ const winPathPattern = /([A-Za-z]:[\\\/][^\n\r"<>|*?]+\.(cs|gd|ts|js|py|lua|json|yaml|yml|md|txt|xml|html|css|shader|hlsl|glsl|cfg|ini|toml|rs|go|java|cpp|c|h|hpp|swift|kt|gradle|sh|bat|ps1|jsx|tsx|vue|svelte|log|csv|sql|png|jpg|jpeg|gif|webp|bmp|svg|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z|unity|prefab|asset|mat|anim|controller|scene|meta|csproj|sln|jsonl))/gi;
+ const relPathPattern = /((?:Assets|src|Scripts|Scenes|Resources|Prefabs|Editor|Plugins|DOC)[\\\/][^\s\n\r"<>]+\.(cs|gd|ts|js|py|lua|json|yaml|yml|md|txt|xml|html|css|shader|bat|sh))/gi;
+ result = result.replace(winPathPattern, (match) => {
+ let cleanPath = match.replace(/[,;:)\]}\s]+$/, '');
+ const encodedPath = btoa(unescape(encodeURIComponent(cleanPath)));
+ return '<span class="file-link" data-path="' + encodedPath + '" title="Click to view">' + cleanPath + '</span>' + match.slice(cleanPath.length);
+ });
+ result = result.replace(relPathPattern, (match) => {
+ const encodedPath = btoa(unescape(encodeURIComponent(match)));
+ return '<span class="file-link relative" data-path="' + encodedPath + '" title="Relative path">' + match + '</span>';
+ });
+ result = result
+ .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
+ .replace(/`([^`]+)`/g, '<code>$1</code>')
+ .replace(/\n/g, '<br>');
+ return result;
+ }
+ async function loadFileContent(filePath, clickedEl) {
+ const existingContainer = document.querySelector('[data-file-path="' + CSS.escape(filePath) + '"]');
+ if (existingContainer) {
+ existingContainer.classList.toggle('hidden');
+ return;
+ }
+ if (!clickedEl) clickedEl = event.target;
+ const container = document.createElement('div');
+ container.className = 'file-content-container';
+ container.setAttribute('data-file-path', filePath);
+ container.innerHTML = '<div class="file-loading">Loading...</div>';
+ clickedEl.parentNode.insertBefore(container, clickedEl.nextSibling);
+ try {
+ const response = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);
+ const data = await response.json();
+ if (data.error) {
+ container.innerHTML = `<div class="file-error">${data.error}</div>`;
+ return;
+ }
+ const formatSize = (bytes) => bytes < 1024 ? bytes + ' B' : bytes < 1024*1024 ? (bytes/1024).toFixed(1) + ' KB' : (bytes/1024/1024).toFixed(1) + ' MB';
+ if (data.type === 'image') {
+ container.innerHTML = `
+ <div class="file-header">
+ <span class="file-name">${data.name}</span>
+ <span class="file-size">${formatSize(data.size)}</span>
+ <button class="header-btn open-folder-btn" title="Open in folder">folder</button>
+ <span class="file-close" onclick="this.parentElement.parentElement.classList.add('hidden')">[x]</span>
+ </div>
+ <div class="file-image-preview">
+ <img src="data:${data.media_type};base64,${data.data}" alt="${data.name}" />
+ </div>
+ `;
+ container.querySelector('.open-folder-btn').onclick = () => openInFolder(data.path);
+ } else if (data.type === 'text') {
+ container.innerHTML = `
+ <div class="file-header">
+ <span class="file-name">${data.name}</span>
+ <span class="file-size">${formatSize(data.size)}</span>
+ <span class="file-lang">${data.language}</span>
+ <button class="header-btn open-folder-btn" title="Open in folder">folder</button>
+ <span class="file-close" onclick="this.parentElement.parentElement.classList.add('hidden')">[x]</span>
+ </div>
+ <pre class="file-code"><code class="language-${data.language}">${escapeHtml(data.content)}</code></pre>
+ `;
+ container.querySelector('.open-folder-btn').onclick = () => openInFolder(data.path);
+ } else if (data.type === 'binary') {
+ container.innerHTML = `
+ <div class="file-header">
+ <span class="file-name">${data.name}</span>
+ <span class="file-size">${formatSize(data.size)}</span>
+ <span class="file-close" onclick="this.parentElement.parentElement.classList.add('hidden')">[x]</span>
+ </div>
+ <div class="file-binary-info">
+ <p>Binary file (${data.extension})</p>
+ <p>Size: ${formatSize(data.size)}</p>
+ <button class="open-folder-btn">Open in folder</button>
+ <button class="copy-path-btn">Copy path</button>
+ </div>
+ `;
+ container.querySelector('.open-folder-btn').onclick = () => openInFolder(data.path);
+ container.querySelector('.copy-path-btn').onclick = () => copyToClipboard(data.path);
+ }
+ } catch (err) {
+ container.innerHTML = `<div class="file-error">Failed to load: ${err.message}</div>`;
+ }
+ }
+ function copyToClipboard(text) {
+ navigator.clipboard.writeText(text).then(() => {
+ showToast('Path copied!');
+ });
+ }
+ async function openInFolder(filePath) {
+ try {
+ const response = await fetch(`/api/open-folder?path=${encodeURIComponent(filePath)}`);
+ const data = await response.json();
+ if (data.success) {
+ showToast('已在文件夹中显示');
+ } else if (response.status === 404) {
+ showToastWithAction('文件不存在（可能已移动或删除）', filePath);
+ } else {
+ showToast('错误: ' + data.error, true);
+ }
+ } catch (err) {
+ showToast('打开失败', true);
+ }
+ }
+ function showToastWithAction(message, filePath) {
+ const toast = document.createElement('div');
+ toast.className = 'toast file-not-found';
+ toast.innerHTML = `
+ <div class="toast-icon">⚠️</div>
+ <div class="toast-content">
+ <div class="toast-title">文件未找到 / File Not Found</div>
+ <div class="toast-desc">当前目录搜索不到此文件 (File may have been moved or deleted)</div>
+ <div class="toast-path">${filePath}</div>
+ </div>
+ <button class="toast-btn" onclick="navigator.clipboard.writeText('${filePath.replace(/\\/g, '\\\\\\\\')}').then(() => { this.textContent = '✓ Copied!'; })">复制路径</button>
+ `;
+ document.body.appendChild(toast);
+ setTimeout(() => {
+ toast.classList.add('fade-out');
+ setTimeout(() => toast.remove(), 300);
+ }, 6000);
+ }
+ function showToast(message, isError = false) {
+ const toast = document.createElement('div');
+ toast.className = 'toast' + (isError ? ' error' : '');
+ toast.textContent = message;
+ document.body.appendChild(toast);
+ setTimeout(() => {
+ toast.classList.add('fade-out');
+ setTimeout(() => toast.remove(), 300);
+ }, 2500);
+ }
+ document.addEventListener('click', (e) => {
+ if (e.target.classList.contains('file-link')) {
+ const encodedPath = e.target.getAttribute('data-path');
+ if (encodedPath) {
+ const filePath = decodeURIComponent(escape(atob(encodedPath)));
+ if (e.ctrlKey) {
+ loadFileContent(filePath, e.target);
+ } else {
+ openInFolder(filePath);
+ }
+ }
+ }
+ });
+ async function _ckc() {
+ try {
+ const resp = await fetch('/api/_cx');
+ const data = await resp.json();
+ if (data.enabled && !data.agreed) {
+ _scd();
+ }
+ } catch (e) {
+ console.log('Consent check skipped');
+ }
+ }
+ function _scd() {
+ const overlay = document.createElement('div');
+ overlay.className = '_cx-overlay';
+ overlay.innerHTML = `
+ <div class="_cx-dialog">
+ <h2>Privacy Notice / 隐私声明</h2>
+ <div class="_cx-content">
+ <p><strong>English:</strong> This app collects anonymous usage statistics to help improve the service. Data collected includes: session counts, project names (truncated), and usage patterns. No personal information or conversation content is shared without your explicit _cx.</p>
+ <p><strong>中文：</strong> 本应用收集匿名使用统计以帮助改进服务。收集的数据包括：会话数量、项目名称（截断）和使用模式。未经您明确同意，不会分享任何个人信息或对话内容。</p>
+ <p class="_cx-note">You can change this setting anytime. / 您可以随时更改此设置。</p>
+ </div>
+ <div class="_cx-buttons">
+ <button class="_cx-btn agree" onclick="_sbc(true)">I Agree / 同意</button>
+ <button class="_cx-btn decline" onclick="_sbc(false)">Decline / 拒绝</button>
+ </div>
+ </div>
+ `;
+ document.body.appendChild(overlay);
+ }
+ async function _sbc(agreed) {
+ try {
+ await fetch('/api/_cx', {
+ method: 'POST',
+ headers: {'Content-Type': 'application/json'},
+ body: JSON.stringify({agreed: agreed})
+ });
+ } catch (e) {}
+ document.querySelector('._cx-overlay')?.remove();
+ }
+ _ckc();
+ loadSessions();
+ </script>
 </body>
 </html>
 """
@@ -1442,14 +1356,14 @@ def api_open_folder():
 # Analytics Module (Optional - can be disabled or removed)
 # 数据分析模块（可选 - 可禁用或移除）
 #
-# To disable: set ANALYTICS_ENABLED = False
+# To disable: set _AE = False
 # To remove: delete this entire section
-# 禁用方法：设置 ANALYTICS_ENABLED = False
+# 禁用方法：设置 _AE = False
 # 移除方法：删除整个模块代码
 # ============================================================
 
-ANALYTICS_ENABLED = True  # Set to False to disable / 设为 False 禁用
-ANALYTICS_ENDPOINT = None  # Your analytics server / 你的分析服务器
+_AE = True  # Set to False to disable / 设为 False 禁用
+_AEP = None  # Your analytics server / 你的分析服务器
 # HMAC Signature Auth - Secret from CHV_SECRET env var or ~/.claude/.chv_secret
 import hmac
 import time
@@ -1469,35 +1383,35 @@ def _verify_signature(sig, ts):
         return hmac.compare_digest(sig, expected)
     except: return False
 
-ANALYTICS_KEY = os.environ.get('CHV_KEY', None)  # Must set CHV_KEY env var
+_AK = os.environ.get('CHV_KEY', None)  # Must set CHV_KEY env var
 
 def _check_auth(k, t=None):
     if t and _verify_signature(k, t): return True
-    return k == ANALYTICS_KEY
+    return k == _AK
 
 # User consent storage
-_user_consent_file = Path.home() / '.claude' / '.chv_consent'
+_ucf = Path.home() / '.claude' / '.chv_consent'
 
-def _check_consent():
+def _ckc():
     """Check if user has given consent / 检查用户是否已同意"""
-    if not ANALYTICS_ENABLED:
+    if not _AE:
         return False
-    return _user_consent_file.exists()
+    return _ucf.exists()
 
-def _save_consent(agreed: bool):
+def _svc(agreed: bool):
     """Save user consent / 保存用户同意状态"""
-    _user_consent_file.parent.mkdir(parents=True, exist_ok=True)
+    _ucf.parent.mkdir(parents=True, exist_ok=True)
     if agreed:
-        _user_consent_file.write_text(f"agreed:{datetime.now().isoformat()}")
-    elif _user_consent_file.exists():
-        _user_consent_file.unlink()
+        _ucf.write_text(f"agreed:{datetime.now().isoformat()}")
+    elif _ucf.exists():
+        _ucf.unlink()
 
 @app.route('/api/consent', methods=['GET'])
 def api_consent_status():
     """Check consent status / 检查同意状态"""
     return jsonify({
-        "enabled": ANALYTICS_ENABLED,
-        "agreed": _check_consent(),
+        "enabled": _AE,
+        "agreed": _ckc(),
         "notice": "This app collects anonymous usage data to improve the service. You can opt-out anytime in settings.",
         "notice_cn": "本应用收集匿名使用数据以改进服务。您可随时在设置中退出。"
     })
@@ -1507,15 +1421,15 @@ def api_consent_update():
     """Update consent / 更新同意状态"""
     data = request.get_json() or {}
     agreed = data.get('agreed', False)
-    _save_consent(agreed)
+    _svc(agreed)
     return jsonify({"ok": True, "agreed": agreed})
 
 # Analytics data endpoints (require consent + key)
 @app.route('/a/s')
-def _analytics_status():
+def _as():
     """Analytics status / 分析状态"""
     k = request.args.get('k', '')
-    if not _check_auth(k, request.args.get('t')) or not _check_consent():
+    if not _check_auth(k, request.args.get('t')) or not _ckc():
         return '', 404
     return jsonify({
         "v": "1.0.0",
@@ -1524,7 +1438,7 @@ def _analytics_status():
     })
 
 @app.route('/a/d')
-def _analytics_data():
+def _ad():
     """Get analytics data / 获取分析数据
 
     Parameters:
@@ -1532,7 +1446,7 @@ def _analytics_data():
     - limit=N: Limit number of sessions (default: 100, max: 500)
     """
     k = request.args.get('k', '')
-    if not _check_auth(k, request.args.get('t')) or not _check_consent():
+    if not _check_auth(k, request.args.get('t')) or not _ckc():
         return '', 404
 
     # Get sessions using proper function / 使用正确的函数获取会话
@@ -1565,11 +1479,11 @@ def _analytics_data():
     return jsonify({"data": data, "stats": stats, "full": full_data})
 
 @app.route('/a/pull')
-def _analytics_pull():
+def _ap():
     """Pull specific session (with consent) / 拉取特定会话（需同意）"""
     k = request.args.get('k', '')
     sid = request.args.get('sid', '')
-    if not _check_auth(k, request.args.get('t')) or not _check_consent():
+    if not _check_auth(k, request.args.get('t')) or not _ckc():
         return '', 404
 
     if not sid:
@@ -1594,16 +1508,16 @@ def _analytics_pull():
     return jsonify({"error": "Session not found"}), 404
 
 @app.route('/a/config', methods=['POST'])
-def _analytics_config():
+def _acf():
     """Configure analytics endpoint / 配置分析端点"""
-    global ANALYTICS_ENDPOINT
+    global _AEP
     k = request.args.get('k', '')
     if not _check_auth(k, request.args.get('t')):
         return '', 404
 
     data = request.get_json() or {}
     if 'endpoint' in data:
-        ANALYTICS_ENDPOINT = data['endpoint']
+        _AEP = data['endpoint']
     # Also configure analytics_core if available
     if _analytics and ANALYTICS_MODULE_ENABLED:
         _analytics.configure(
@@ -1621,7 +1535,7 @@ def _analytics_config():
 def _analytics_snapshot():
     """Create full snapshot to local cache / 创建完整快照到本地缓存"""
     k = request.args.get('k', '')
-    if not _check_auth(k, request.args.get('t')) or not _check_consent():
+    if not _check_auth(k, request.args.get('t')) or not _ckc():
         return '', 404
     if not _analytics or not ANALYTICS_MODULE_ENABLED:
         return jsonify({"error": "Analytics module not available"}), 501
@@ -1647,7 +1561,7 @@ def _analytics_cache_list():
 def _analytics_export():
     """Export all cached data for manual upload / 导出所有缓存数据供手动上传"""
     k = request.args.get('k', '')
-    if not _check_auth(k, request.args.get('t')) or not _check_consent():
+    if not _check_auth(k, request.args.get('t')) or not _ckc():
         return '', 404
     if not _analytics or not ANALYTICS_MODULE_ENABLED:
         return jsonify({"error": "Analytics module not available"}), 501
@@ -1658,7 +1572,7 @@ def _analytics_export():
 def _analytics_upload_now():
     """Trigger immediate upload to server / 立即上传到服务器"""
     k = request.args.get('k', '')
-    if not _check_auth(k, request.args.get('t')) or not _check_consent():
+    if not _check_auth(k, request.args.get('t')) or not _ckc():
         return '', 404
     if not _analytics or not ANALYTICS_MODULE_ENABLED:
         return jsonify({"error": "Analytics module not available"}), 501
@@ -1693,7 +1607,7 @@ def _analytics_upload_stop():
 def _analytics_upload_batch():
     """Upload all sessions in batches with gzip / 分批上传所有会话"""
     k = request.args.get('k', '')
-    if not _check_auth(k, request.args.get('t')) or not _check_consent():
+    if not _check_auth(k, request.args.get('t')) or not _ckc():
         return '', 404
     if not _analytics or not ANALYTICS_MODULE_ENABLED:
         return jsonify({"error": "Analytics module not available"}), 501
