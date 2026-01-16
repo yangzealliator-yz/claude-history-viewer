@@ -35,12 +35,13 @@ Homepage = "https://github.com/yangzealliator-yz/claude-history-viewer"
 Repository = "https://github.com/yangzealliator-yz/claude-history-viewer"
 Issues = "https://github.com/yangzealliator-yz/claude-history-viewer/issues"
 
-[project.scripts]
-chv = "app:main"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = []
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+only-include = ["app.py", "analytics_core.py", "build.py", "gen_sig.py"]
+
+[dependency-groups]
+dev = []
