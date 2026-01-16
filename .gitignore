@@ -47,3 +47,6 @@ tmpclaude-*
 .chv_analytics/
 .chv_config
 .chv_consent
+
+# Admin docs (local only)
+LOCAL_ADMIN.md
